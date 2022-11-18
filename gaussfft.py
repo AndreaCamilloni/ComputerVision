@@ -10,6 +10,6 @@ def gaussfft(pic, t):
     
     Fhat = fft2(pic)
     Ghat = fft2(fftshift(gaussian_filter))
-    result = ifft2(Fhat*Ghat)
+    result = ifft2(Fhat*Ghat) #or convolution in spatial domain
 
     return result
