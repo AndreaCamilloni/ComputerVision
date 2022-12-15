@@ -167,8 +167,8 @@ def graphcut_segm(I, area, K, alpha, sigma):
 
     for l in range(3):
         print('Find Gaussian mixture models...')
-        fprob = mixture_prob(I, K, 10, mask)
-        bprob = mixture_prob(I, K, 10, 1-mask)
+        fprob = mixture_prob(I, K, 10, mask) #statistical background model
+        bprob = mixture_prob(I, K, 10, 1-mask) # statistical foreground model
         prior = np.reshape(fprob/(fprob + bprob), (h, w))
 
         print('Find minimum cut...')
@@ -180,29 +180,144 @@ def graphcut_segm(I, area, K, alpha, sigma):
 ##############################
 
 
-def graphcut_example():
-    scale_factor = 0.5           # image downscale factor
-    area = [ 80, 110, 570, 300 ] # image region to train foreground with [ minx, miny, maxx, maxy ]
-    K = 16                       # number of mixture components
-    alpha = 8.0                  # maximum edge cost
-    sigma = 20.0                 # edge cost decay factor
+def graphcut_example(img, scale_factor=0.5, area=[ 80, 110, 570, 300 ], K=16, alpha=8.0, sigma=20.0):
 
-    img = Image.open('Images-jpg/tiger1.jpg')
     img = img.resize((int(img.size[0]*scale_factor), int(img.size[1]*scale_factor)))
 
     area = [ int(i*scale_factor) for i in area ]
     I = np.asarray(img).astype(np.float32)
     segm, prior = graphcut_segm(I, area, K, alpha, sigma)
     
-    Inew = mean_segments(img, segm)
+    Iseg = mean_segments(img, segm)
     if True:
         Inew = overlay_bounds(img, segm)
 
     img = Image.fromarray(Inew.astype(np.ubyte))
-    plt.imshow(img)
-    plt.axis('off')
-    plt.show()
-    img.save('result/graphcut.png')
+    return img, Image.fromarray(Iseg.astype(np.ubyte)), prior
+
+
+
+
+
+'''
+this function
+uses a mask to identify pixels from an image that are used to estimate a mixture of K Gaussian
+components. The mask has the same size as the image. A pixel that is to be included has a mask value
+1, otherwise 0. A call to the function can be written as
+prob = mixture prob(image, K, L, mask)
+
+Let I be a set of pixels and V be a set of K Gaussian components in 3D (R,G,B).
+% Store all pixels for which mask=1 in a Nx3 matrix
+% Randomly initialize the K components using masked pixels
+% Iterate L times
+% Expectation: Compute probabilities P_ik using masked pixels
+% Maximization: Update weights, means and covariances using masked pixels
+% Compute probabilities p(c_i) in Eq.(3) for all pixels I.
+
+'''
+#mask = np.zeros((h, w), dtype=np.int16)
+
+import scipy
+
+
+def kmeans_segm(image, K, L, seed=42):
+    """
+    kmeans segmentation function re-written to support flattened images
+    the function used for the first part of the lab is in the notebook
+    """
+    flatten = np.reshape(image, (-1, 3))
+    segmentation = flatten
+    np.random.seed(seed)
+    
+    _flatten = np.unique(flatten, axis=0)
+    randoms = np.random.randint(low=0, high=np.shape(_flatten)[0], size=K)
+    
+    centers = _flatten[randoms, :]
+    old_c = np.zeros(np.shape(centers))
+    
+
+
+    for i in range(L):
+        dists = distance_matrix(flatten, centers)
+        # movements[i] = sum(np.min(dists, axis=1))   # pixels
+        segmentation = np.argmin(dists,1)   # pixels
+        # plt.hist(segmentation)
+        # plt.show()
+        for center in range(K):
+            old_c[center, :] = centers[center, :]
+            cluster_points = np.nonzero(segmentation == center)
+            cluster_points = np.reshape(cluster_points, (-1))
+            # print(cluster_points)
+            mean = np.mean(flatten[cluster_points])
+            centers[center, :] = mean
+       
+        if np.max(np.max(abs(old_c - centers))) < 0.01:
+            break
+     
+    segmentation = np.reshape(segmentation, (np.shape(image)[0]))
+    
+    return segmentation, centers
+
+    
+def mixture_prob(image, K, L, mask):
+    """
+    Implement a function that creates a Gaussian mixture models using the pixels 
+    in an image for which mask=1 and then returns an image with probabilities for
+    every pixel in the original image.
+    Input arguments:
+        image - the RGB input image 
+        K - number of clusters
+        L - number of iterations
+        mask - an integer image where mask=1 indicates pixels used 
+    Output:
+        prob: an image with probabilities per pixel
+    """
+    #shape = np.shape(image)
+
+    image = image / 255 # normalize image
+
+    Ivec = np.reshape(image, (-1, 3)).astype(np.float32) # flatten image
+    m = np.reshape(mask, (-1)) # flatten mask
+    masked = Ivec[np.reshape(np.nonzero(m == 1), (-1))] # get masked pixels
+    size = np.shape(masked)[0] # number of masked pixels
+    segs, centers = kmeans_segm(masked, K, L) # get kmeans segmentation
+
+    # Initialize weights, means and covariances
+    covariances = []
+    p = np.ones((size, K)) * 0.001
+    gauss = np.zeros((size, K))
+    for i in range(K):
+        covariances.append(np.eye(3) * 0.01)
+
+    w = np.zeros(K)
+    for i in range(K):
+        w[i] = len(np.nonzero(segs == i)) / size
+
+    # Iterate L times 
+    for i in range(L):
+        for j in range(K):
+            # Compute probabilities P_ik using masked pixels
+            gauss[:, j] = w[j] * scipy.stats.multivariate_normal(centers[j], covariances[j]).pdf(masked)
+
+        for j in range(K):
+            # Expectation: Compute probabilities P_ik using masked pixels
+            p[:, j] = np.divide(gauss[:, j], np.sum(gauss, axis=1), where=np.sum(gauss, axis=1)!=0)
+
+        for j in range(K):
+            w[j] = np.mean(p[:,j]) # update weights according to wk = 1/N * sum(pik)
+            centers[j,:] = np.dot(np.transpose(p[:, j]), masked) / np.sum(p[:, j]) # update means according to uk = sum(pik * xk) / sum(pik)
+            diff = masked - centers[j,:]
+            covariances[j] = np.dot(np.transpose(diff), diff * np.reshape(p[:, j], (-1, 1))) / np.sum(p[:, j]) # update covariances according to covk = sum(pik * (xk - uk) * (xk - uk)^T) / sum(pik)
+
+    prob = np.zeros((np.shape(Ivec)[0], K)) # matrix of probabilities 
+    for i in range(K):
+        # Compute probabilities p(c_i) in Eq.(3) for all pixels I.
+        prob[:, i] = w[i] * scipy.stats.multivariate_normal(centers[i], covariances[i]).pdf(Ivec)
+        prob[:, i] = prob[:, i] / np.sum(prob[:, i])
+    #
+    prob = np.sum(prob, axis=1)
+    prob = np.reshape(prob, (np.shape(image)[0], np.shape(image)[1]))
+    return prob
 
 if __name__ == '__main__':
     sys.exit(graphcut_example())

@@ -76,7 +76,7 @@ def extractedge(inpic, scale, threshold, shape = 'same'):
 
     Lvmask = gradmagn > threshold
     LvvvMask = Lvvv < 0
-    curves = zerocrosscurves(Lvv, LvvvMask)
+    curves = zerocrosscurves(Lvv, LvvvMask) #Extraction of zero-crossing curves
     contours = thresholdcurves(curves, Lvmask)
     return contours
         
@@ -93,15 +93,15 @@ def houghline(pic, curves, magnitude, nrho, ntheta, threshold, nlines=20, verbos
         curveMagn = magnitude[x][y]
         if curveMagn > threshold:
             for j in range(ntheta):
-                rhoVal = x * np.cos(theta[j]) + y * np.sin(theta[j])
-                rhoIndex = np.argmin(abs(rho - rhoVal))
-                acc[rhoIndex][j] += 1
+                rhoVal = x * np.cos(theta[j]) + y * np.sin(theta[j]) # compute rho, distance from origin
+                rhoIndex = np.argmin(abs(rho - rhoVal)) # find the index of the closest rho value
+                acc[rhoIndex][j] += 1 # increment the accumulator
                 #acc[rhoIndex][j] += np.log(curveMagn) # question 10
 
     linepar = []
-    pos, value, _ = locmax8(acc)
-    indexvector = np.argsort(value)[-nlines:]
-    pos = pos[indexvector]
+    pos, value, _ = locmax8(acc) # find local maxima
+    indexvector = np.argsort(value)[-nlines:] # sort the local maxima
+    pos = pos[indexvector] # sort the local maxima
 
     plt.figure(figsize=(20, 5))
     plt.subplot(1, 4, 1)
@@ -110,11 +110,11 @@ def houghline(pic, curves, magnitude, nrho, ntheta, threshold, nlines=20, verbos
     plt.subplot(1, 4, 2)
     showgrey(pic, False)
     for idx in range(nlines):
-        thetaidxacc = pos[idx][0]
-        rhoidxacc = pos[idx][1]
+        thetaidxacc = pos[idx][0] 
+        rhoidxacc = pos[idx][1] 
         rhoMax = rho[rhoidxacc]
         thetaMax = theta[thetaidxacc]
-        linepar.append([rhoMax, thetaMax])
+        linepar.append([rhoMax, thetaMax]) 
 
         x0 = rhoMax * np.cos(thetaMax)
         y0 = rhoMax * np.sin(thetaMax)
